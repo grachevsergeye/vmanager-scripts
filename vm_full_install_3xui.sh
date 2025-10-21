@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==========================================================
-# Automated 3x-ui Installer with full logging and error handling
+# Automated 3x-ui Installer with Self-Healing APT Setup
 # Works cleanly on Ubuntu 22.04+
 # ==========================================================
 
@@ -11,10 +11,15 @@ trap 'echo "[ERROR] Script failed at line $LINENO" | tee -a "$LOG_FILE"' ERR
 
 echo "========== $(date) Starting full 3x-ui installation =========="
 
-# --- Step 1: Update System ---
+# --- Step 0: Fix interrupted installs or dpkg locks ---
+echo "[INFO] Checking and fixing dpkg/apt state..."
 export DEBIAN_FRONTEND=noninteractive
+dpkg --configure -a || true
+apt --fix-broken install -y || true
+
+# --- Step 1: Update System ---
 apt update -y
-apt upgrade -y
+apt upgrade -y || apt --fix-broken install -y
 
 # --- Step 2: Install essentials ---
 apt install -y vim curl wget sudo tar lsof net-tools cron
@@ -25,7 +30,7 @@ if dpkg -l | grep -q "^ii  systemctl "; then
   apt remove -y systemctl
 fi
 
-# --- Step 4: Create vm_install_3xui.sh ---
+# --- Step 4: Create installer script ---
 cat <<'EOF' > /root/vm_install_3xui.sh
 #!/bin/bash
 LOG_FILE="/var/log/vm_install_3xui.log"
@@ -36,17 +41,17 @@ trap 'echo "[ERROR] Script failed at line $LINENO" | tee -a "$LOG_FILE"' ERR
 echo "========== $(date) Starting 3x-ui installation =========="
 
 export DEBIAN_FRONTEND=noninteractive
+dpkg --configure -a || true
+apt --fix-broken install -y || true
 apt update -y
 apt install -y curl wget tar sudo lsof net-tools cron
 
-# --- Download and install 3x-ui ---
 curl -L -o /tmp/install_3xui.sh https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh
 chmod +x /tmp/install_3xui.sh
 bash /tmp/install_3xui.sh <<EOF2
 n
 EOF2
 
-# --- Enable and start service ---
 systemctl enable x-ui || true
 systemctl start x-ui || true
 
@@ -55,9 +60,6 @@ echo "Logs saved to $LOG_FILE"
 EOF
 
 chmod +x /root/vm_install_3xui.sh
-
-# --- Step 5: Run it automatically ---
-echo "▶️ Running 3x-ui installer..."
 bash /root/vm_install_3xui.sh
 
 echo "✅ All steps finished at $(date)"
