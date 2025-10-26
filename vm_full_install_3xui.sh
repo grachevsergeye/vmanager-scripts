@@ -1,66 +1,51 @@
 #!/bin/bash
-# ==========================================================
-# Automated 3x-ui Installer with Self-Healing APT Setup
-# Works cleanly on Ubuntu 22.04+
-# ==========================================================
-
 LOG_FILE="/var/log/vm_install_3xui.log"
+SUMMARY_FILE="/root/3xui.txt"
+
 exec > >(tee -a "$LOG_FILE") 2>&1
 set -e
-trap 'echo "[ERROR] Script failed at line $LINENO" | tee -a "$LOG_FILE"' ERR
 
-echo "========== $(date) Starting full 3x-ui installation =========="
+error_exit() {
+  echo "❌ ERROR: $1" | tee "$SUMMARY_FILE"
+  exit 1
+}
 
-# --- Step 0: Fix interrupted installs or dpkg locks ---
-echo "[INFO] Checking and fixing dpkg/apt state..."
-export DEBIAN_FRONTEND=noninteractive
-dpkg --configure -a || true
-apt --fix-broken install -y || true
+echo "=== Installing 3x-ui $(date) ==="
 
-# --- Step 1: Update System ---
-apt update -y
-apt upgrade -y || apt --fix-broken install -y
+apt-get update -y || error_exit "apt update failed"
+apt-get install -y curl wget sudo jq || error_exit "deps failed"
 
-# --- Step 2: Install essentials ---
-apt install -y vim curl wget sudo tar lsof net-tools cron
-
-# --- Step 3: Clean up fake 'systemctl' if installed ---
-if dpkg -l | grep -q "^ii  systemctl "; then
-  echo "⚠️  Removing fake systemctl package..."
-  apt remove -y systemctl
+# Fix missing systemctl wrappers on minimal Ubuntu
+if ! command -v systemctl >/dev/null 2>&1; then
+  echo "Creating systemctl fallback..."
+  cat >/usr/bin/systemctl <<'EOF'
+#!/bin/bash
+if [ "$1" = "enable" ] || [ "$1" = "start" ]; then
+  service "$2" start
+else
+  service "$2" "$1"
+fi
+EOF
+  chmod +x /usr/bin/systemctl
 fi
 
-# --- Step 4: Create installer script ---
-cat <<'EOF' > /root/vm_install_3xui.sh
-#!/bin/bash
-LOG_FILE="/var/log/vm_install_3xui.log"
-exec > >(tee -a "$LOG_FILE") 2>&1
-set -e
-trap 'echo "[ERROR] Script failed at line $LINENO" | tee -a "$LOG_FILE"' ERR
+# Run 3x-ui installer
+bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) || error_exit "3x-ui install failed"
 
-echo "========== $(date) Starting 3x-ui installation =========="
+sleep 5
 
-export DEBIAN_FRONTEND=noninteractive
-dpkg --configure -a || true
-apt --fix-broken install -y || true
-apt update -y
-apt install -y curl wget tar sudo lsof net-tools cron
+# Attempt to detect credentials
+CFG="/etc/x-ui/x-ui.db"
+IP=$(hostname -I | awk '{print $1}')
+PORT=$(ss -tlnp 2>/dev/null | awk '/x-ui/ {print $4}' | sed -E 's/.*:([0-9]+)$/\1/' | head -n1)
+USER=$(grep -m1 -Eo 'Username: *[^ ]+' "$LOG_FILE" | awk '{print $2}')
+PASS=$(grep -m1 -Eo 'Password: *[^ ]+' "$LOG_FILE" | awk '{print $2}')
 
-curl -L -o /tmp/install_3xui.sh https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh
-chmod +x /tmp/install_3xui.sh
-bash /tmp/install_3xui.sh <<EOF2
-n
-EOF2
-
-systemctl enable x-ui || true
-systemctl start x-ui || true
-
-echo "✅ 3x-ui installed successfully at $(date)"
-echo "Logs saved to $LOG_FILE"
+cat <<EOF > "$SUMMARY_FILE"
+✅ 3x-ui installed successfully!
+Panel: http://${IP}:${PORT:-54321}
+Username: ${USER:-admin}
+Password: ${PASS:-admin}
 EOF
 
-chmod +x /root/vm_install_3xui.sh
-bash /root/vm_install_3xui.sh
-
-echo "✅ All steps finished at $(date)"
-echo "Check logs here: $LOG_FILE"
+echo "Summary saved to $SUMMARY_FILE"
