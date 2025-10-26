@@ -1,33 +1,33 @@
 #!/bin/bash
-# ==========================================================
-# Full Outline VPN Installer for Debian/Ubuntu
-# ==========================================================
-
 LOG="/var/log/vm_install_outline.log"
 SUMMARY="/root/outline.txt"
-
-exec > >(tee -a "$LOG") 2>&1
+exec >>"$LOG" 2>&1
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
-echo "[INFO] Installing Outline VPN..."
-
+echo "=== $(date) Outline full installer ==="
 dpkg --configure -a || true
 apt --fix-broken install -y || true
 apt update -y
-apt install -y curl wget sudo jq docker.io -y
+apt install -y curl wget sudo docker.io jq || true
+systemctl enable --now docker || true
 
-systemctl enable --now docker
+# run upstream Outline server manager installer
+bash <(wget -qO- https://raw.githubusercontent.com/Jigsaw-Code/outline-apps/master/server_manager/install_scripts/install_server.sh) || true
 
-bash <(wget -qO- https://raw.githubusercontent.com/Jigsaw-Code/outline-apps/master/server_manager/install_scripts/install_server.sh) | tee -a "$LOG"
+# find the generated access file (server_manager writes access.txt)
+ACCESS_FILE=$(find /root /home -name access.txt 2>/dev/null | head -n1)
+if [ -n "$ACCESS_FILE" ]; then
+  ACCESS_CONTENT=$(cat "$ACCESS_FILE")
+else
+  ACCESS_CONTENT="(access.txt not found; check $LOG)"
+fi
 
-ACCESS=$(find /root /home -name access.txt 2>/dev/null | head -n1)
-KEY=$(grep -Eo 'ss://[^ ]+' "$ACCESS" | head -n1)
+cat > "$SUMMARY" <<EOF
+Outline installation finished: $(date)
 
-cat <<EOF > "$SUMMARY"
-✅ Outline VPN installed successfully
-Access key: ${KEY:-check access.txt}
+Access info (first ~100 lines):
+$ACCESS_CONTENT
 EOF
 
-echo "[OK] Outline VPN installation complete."
-v
+echo "Outline installer finished."
