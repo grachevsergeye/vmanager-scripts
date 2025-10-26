@@ -1,21 +1,38 @@
 #!/bin/bash
-LOG_FILE="/var/log/vm_install_3xui.log"
-SUMMARY_FILE="/root/3xui.txt"
+# ==========================================================
+# Full 3x-ui Installer for Debian/Ubuntu
+# ==========================================================
+
+LOG="/var/log/vm_install_3xui.log"
+SUMMARY="/root/3xui.txt"
+
+exec > >(tee -a "$LOG") 2>&1
 set -e
+export DEBIAN_FRONTEND=noninteractive
 
-apt update -y >/dev/null 2>&1
-apt install -y curl wget sudo >/dev/null 2>&1
+echo "[INFO] Starting full 3x-ui install..."
 
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) >/dev/null 2>&1
+dpkg --configure -a || true
+apt --fix-broken install -y || true
+apt update -y
+apt install -y curl wget sudo tar lsof net-tools cron
+
+bash <(curl -Ls https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh) <<EOF
+n
+EOF
+
+systemctl enable x-ui || true
+systemctl start x-ui || true
 
 IP=$(hostname -I | awk '{print $1}')
 PORT=$(ss -tlnp | grep -m1 x-ui | awk '{print $4}' | sed 's/.*://')
-USER="admin"
-PASS="admin"
+PORT=${PORT:-54321}
 
-cat <<EOF > "$SUMMARY_FILE"
+cat <<EOF > "$SUMMARY"
 ✅ 3x-ui installed successfully
-Panel: http://${IP}:${PORT:-54321}
-Username: ${USER}
-Password: ${PASS}
+Panel: http://${IP}:${PORT}
+Username: admin
+Password: admin
 EOF
+
+echo "[OK] 3x-ui installed successfully."
