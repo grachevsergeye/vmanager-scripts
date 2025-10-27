@@ -1,57 +1,55 @@
 #!/bin/bash
-# Full 3x-ui installer
-LOG="/var/log/vm_install_3xui.log"
-SUMMARY="/root/3xui.txt"
+# ==========================================================
+# 3x-ui Full Installer with Summary Output for VManager
+# ==========================================================
 
-exec >>"$LOG" 2>&1
+LOG_FILE="/var/log/vm_install_3xui.log"
+SUMMARY_FILE="/root/3xui.txt"
+exec > >(tee -a "$LOG_FILE") 2>&1
 set -e
+
+echo "========== $(date) Starting 3x-ui installation =========="
+
 export DEBIAN_FRONTEND=noninteractive
-
-echo "=== $(date) Starting full 3x-ui install ==="
-
-# fix dpkg / apt
 dpkg --configure -a || true
 apt --fix-broken install -y || true
 apt update -y
-apt upgrade -y || true
+apt install -y curl wget sudo tar lsof net-tools cron jq
 
-# prerequisites
-apt install -y curl wget tar lsof net-tools sudo cron || true
-
-# remove problematic fake systemctl if present (some minimal images ship weird packages)
-if dpkg -l | grep -q "^ii  systemctl "; then
-  apt remove -y systemctl || true
-fi
-
-# download + run upstream installer non-interactive
+# --- Download and install 3x-ui ---
 curl -L -o /tmp/install_3xui.sh https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh
 chmod +x /tmp/install_3xui.sh
-
-# run installer and capture output
-/tmp/install_3xui.sh <<'ENDINPUT'
+bash /tmp/install_3xui.sh <<EOF
 n
-ENDINPUT
-
-# try start/enable
-systemctl enable x-ui || true
-systemctl start x-ui || true
-
-# Try to extract credentials from the log (the upstream installer prints them)
-sleep 1
-IP=$(hostname -I | awk '{print $1}')
-# extract common labels (Username/Password/Port/WebBasePath/Access URL)
-USER=$(grep -m1 -E 'Username:' "$LOG" | awk -F: '{print $2}' | tr -d ' ')
-PASS=$(grep -m1 -E 'Password:' "$LOG" | awk -F: '{print $2}' | tr -d ' ')
-PORT=$(grep -m1 -E 'Port:' "$LOG" | awk -F: '{print $2}' | tr -d ' ')
-WEBPATH=$(grep -m1 -E 'WebBasePath:' "$LOG" | awk -F: '{print $2}' | tr -d ' ')
-ACCESSURL=$(grep -m1 -E 'Access URL:' "$LOG" | sed -n 's/.*Access URL: //p' || true)
-
-cat > "$SUMMARY" <<EOF
-3x-ui install finished: $(date)
-Access URL: ${ACCESSURL:-http://${IP}:${PORT}${WEBPATH}}
-Username: ${USER:-(see log)}
-Password: ${PASS:-(see log)}
-Port: ${PORT:-(see log)}
 EOF
 
-echo "3x-ui installer done."
+systemctl enable x-ui || true
+systemctl restart x-ui || true
+
+# --- Extract data from config ---
+CONFIG="/usr/local/x-ui/bin/config.json"
+if [ -f "$CONFIG" ]; then
+  LOGIN=$(jq -r '.webUser' "$CONFIG" 2>/dev/null || echo "admin")
+  PASSWORD=$(jq -r '.webPassword' "$CONFIG" 2>/dev/null || echo "admin123")
+  PORT=$(jq -r '.webPort' "$CONFIG" 2>/dev/null || echo "54321")
+else
+  LOGIN="admin"
+  PASSWORD="admin123"
+  PORT="54321"
+fi
+
+IP=$(hostname -I | awk '{print $1}')
+
+cat <<EOF2 | tee "$SUMMARY_FILE"
+
+✅ 3x-ui installed successfully!
+---------------------------------------
+Login:     $LOGIN
+Password:  $PASSWORD
+Panel URL: http://$IP:$PORT
+---------------------------------------
+Logs:      $LOG_FILE
+Summary:   $SUMMARY_FILE
+EOF2
+
+echo "[DONE] $(date) 3x-ui installation complete."
