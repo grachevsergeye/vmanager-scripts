@@ -20,9 +20,8 @@ echo "Running apt update..."
 apt-get update -y >/dev/null 2>&1 || true
 
 # Install required packages. This command *must* succeed.
-# The previous apt-get update failure should be non-critical for essential packages.
 echo "Installing required packages..." | tee -a "$LOG_FILE"
-apt-get install -y curl wget sudo tar lsof net-tools jq grep awk
+apt-get install -y curl wget sudo tar lsof net-tools jq grep gawk
 
 # --- END FIXED BLOCK ---
 
