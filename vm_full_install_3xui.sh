@@ -39,10 +39,17 @@ if [ -z "$USERNAME" ] || [ -z "$PASSWORD" ] || [ -z "$PORT" ] || [ -z "$PATH_ID"
   exit 1
 fi
 
-# --- Save to console ---
+# --- Save to console output file ---
 cat <<EOF > "$SUMMARY_FILE"
-clear
 echo -e "\033[1;32m✅ Installation complete!\033[0m"
-echo "Login: $username"
-echo "Password: $password"
-echo "URL: $url"
+echo "Login: $USERNAME"
+echo "Password: $PASSWORD"
+echo "URL: http://$IP:$PORT/$PATH_ID"
+EOF
+
+# --- Auto-display on next root login ---
+if ! grep -q "3xui.txt" /root/.bashrc; then
+  echo "bash /root/3xui.txt" >> /root/.bashrc
+fi
+
+echo "[DONE] $(date) 3x-ui installation complete."
