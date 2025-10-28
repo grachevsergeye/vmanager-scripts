@@ -5,6 +5,7 @@
 
 LOG_FILE="/var/log/vm_install_3xui.log"
 SUMMARY_FILE="/root/3xui.txt"
+CONFIG_FILE="/usr/local/x-ui/bin/config.json"
 
 set -e
 export DEBIAN_FRONTEND=noninteractive
@@ -27,25 +28,30 @@ EOF
 systemctl enable x-ui >/dev/null 2>&1 || true
 systemctl restart x-ui >/dev/null 2>&1 || true
 
-# Extract info
-sleep 2
-CONFIG="/usr/local/x-ui/bin/config.json"
+# --- Wait until config.json appears ---
+for i in {1..30}; do
+    if [ -f "$CONFIG_FILE" ]; then
+        break
+    fi
+    echo "Waiting for config.json... ($i)"
+    sleep 2
+done
 
-if [ -f "$CONFIG" ]; then
-    USERNAME=$(jq -r '.webUser' "$CONFIG")
-    PASSWORD=$(jq -r '.webPassword' "$CONFIG")
-    PORT=$(jq -r '.webPort' "$CONFIG")
-    PATH_ID=$(jq -r '.webBasePath' "$CONFIG")
-else
-    USERNAME="admin"
-    PASSWORD="admin123"
-    PORT="54321"
-    PATH_ID=""
-fi
+# --- Parse credentials safely ---
+USERNAME=$(jq -r '.webUser // .username // .admin // empty' "$CONFIG_FILE" 2>/dev/null)
+PASSWORD=$(jq -r '.webPassword // .password // .pass // empty' "$CONFIG_FILE" 2>/dev/null)
+PORT=$(jq -r '.webPort // .port // empty' "$CONFIG_FILE" 2>/dev/null)
+PATH_ID=$(jq -r '.webBasePath // .path // empty' "$CONFIG_FILE" 2>/dev/null)
+
+# --- Fallback if still empty ---
+if [ -z "$USERNAME" ] || [ "$USERNAME" = "null" ]; then USERNAME="admin"; fi
+if [ -z "$PASSWORD" ] || [ "$PASSWORD" = "null" ]; then PASSWORD="admin123"; fi
+if [ -z "$PORT" ] || [ "$PORT" = "null" ]; then PORT="54321"; fi
+if [ -z "$PATH_ID" ] || [ "$PATH_ID" = "null" ]; then PATH_ID=""; fi
 
 IP=$(hostname -I | awk '{print $1}')
 
-# Save output file
+# --- Save output file ---
 cat <<EOF > "$SUMMARY_FILE"
 echo ""
 echo -e "\033[1;32m✅ 3x-ui Installation Complete!\033[0m"
@@ -57,7 +63,7 @@ EOF
 
 chmod +x "$SUMMARY_FILE"
 
-# Run summary at every login
+# --- Ensure summary shows at every login ---
 if ! grep -q "bash /root/3xui.txt" /root/.bashrc; then
     echo "bash /root/3xui.txt" >> /root/.bashrc
 fi
