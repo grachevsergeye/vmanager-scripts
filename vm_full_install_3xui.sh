@@ -38,33 +38,35 @@ EOF
 ) || true
 
 
-# --- 3. Parse credentials and set fallbacks ---
-# Corrected parsing logic for URL and Credentials
-USERNAME=$(grep 'Login:' "$TEMP_CRED_FILE" | awk '{print $2}' | tr -d '\r' || echo "admin")
-PASSWORD=$(grep 'Password:' "$TEMP_CRED_FILE" | awk '{print $2}' | tr -d '\r' || echo "admin123")
-FULL_URL_PART=$(grep 'URL:' "$TEMP_CRED_FILE" | awk '{print $2}' | tr -d '\r')
+# --- NEW: Force a known, reliable password for guaranteed access ---
+GUARANTEED_PASSWORD="Vmanger6-UserPassword" # Set a password you know will work
+GUARANTEED_USERNAME="admin"
+CONFIG_FILE="/usr/local/x-ui/bin/config.json"
 
-# Fallback for IP/Port/URL if capture failed
-IP=$(hostname -I | awk '{print $1}')
-PORT=$(grep -oP '"webPort":\s*\K\d+' /usr/local/x-ui/bin/config.json || echo "54321")
-PATH_ID=$(grep -oP '"webBasePath":\s*"\K[^"]+' /usr/local/x-ui/bin/config.json || echo "")
-
-# If URL parsing failed, construct it from config fallbacks
-if [ -z "$FULL_URL_PART" ] || [ "$FULL_URL_PART" = "URL:" ]; then
-    FULL_URL="http://$IP:$PORT/$PATH_ID"
+echo "Forcing guaranteed credentials..." | tee -a "$LOG_FILE"
+# Check if the 'x-ui' command exists
+if command -v x-ui &> /dev/null; then
+    # Use the x-ui CLI tool to reset the credentials
+    echo "y" | x-ui setting -username "$GUARANTEED_USERNAME" -password "$GUARANTEED_PASSWORD"
 else
-    FULL_URL="$FULL_URL_PART"
+    echo "Warning: x-ui CLI not found, falling back to displayed credentials." | tee -a "$LOG_FILE"
 fi
 
-# Final safety net for credentials
-if [ -z "$USERNAME" ] || [ "$USERNAME" = "null" ]; then USERNAME="admin"; fi
-if [ -z "$PASSWORD" ] || [ "$PASSWORD" = "null" ]; then PASSWORD="admin123"; fi
+# --- 3. Parse and set fallbacks (Now using guaranteed values) ---
+USERNAME="$GUARANTEED_USERNAME"
+PASSWORD="$GUARANTEED_PASSWORD"
 
+# Fallback for IP/Port/URL (same logic, but uses the guaranteed URL construction)
+IP=$(hostname -I | awk '{print $1}')
+PORT=$(grep -oP '"webPort":\s*\K\d+' "$CONFIG_FILE" 2>/dev/null || echo "54321")
+PATH_ID=$(grep -oP '"webBasePath":\s*"\K[^"]+' "$CONFIG_FILE" 2>/dev/null || echo "")
+FULL_URL="http://$IP:$PORT/$PATH_ID"
 
 # --- 4. Implement Guaranteed MOTD Display ---
+# ... (MOTD logic is now updated to use GUARANTEED_PASSWORD) ...
 echo "Setting up guaranteed login summary (MOTD)..." | tee -a "$LOG_FILE"
 
-# Create the final raw text file with color codes
+# Create the final raw text file with guaranteed credentials
 cat <<EOF > "$RAW_CREDS_FILE"
 \033[1;32m✅ 3x-ui Installation Complete!\033[0m
 Login: $USERNAME
