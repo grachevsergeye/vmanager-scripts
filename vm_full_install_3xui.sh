@@ -5,7 +5,6 @@
 
 LOG_FILE="/var/log/vm_install_3xui.log"
 SUMMARY_FILE="/root/3xui.txt"
-exec > >(tee -a "$LOG_FILE") 2>&1
 set -e
 
 echo "========== $(date) Starting 3x-ui installation =========="
@@ -40,18 +39,10 @@ if [ -z "$USERNAME" ] || [ -z "$PASSWORD" ] || [ -z "$PORT" ] || [ -z "$PATH_ID"
   exit 1
 fi
 
-# --- Save to summary file ---
+# --- Save to console ---
 cat <<EOF > "$SUMMARY_FILE"
-✅ Installation complete!
-Login: $USERNAME
-Password: $PASSWORD
-URL: http://$IP:$PORT/$PATH_ID
-EOF
-
-# --- Print final message clearly ---
-echo
-echo "==============================================="
-cat "$SUMMARY_FILE"
-echo "==============================================="
-echo "Logs: $LOG_FILE"
-echo "[DONE] $(date) 3x-ui installation complete."
+clear
+echo -e "\033[1;32m✅ Installation complete!\033[0m"
+echo "Login: $username"
+echo "Password: $password"
+echo "URL: $url"
