@@ -38,10 +38,11 @@ for i in {1..30}; do
 done
 
 # --- Parse credentials safely ---
-USERNAME=$(jq -r '.webUser // .username // .admin // empty' "$CONFIG_FILE" 2>/dev/null)
-PASSWORD=$(jq -r '.webPassword // .password // .pass // empty' "$CONFIG_FILE" 2>/dev/null)
-PORT=$(jq -r '.webPort // .port // empty' "$CONFIG_FILE" 2>/dev/null)
-PATH_ID=$(jq -r '.webBasePath // .path // empty' "$CONFIG_FILE" 2>/dev/null)
+apt-get install -y sqlite3 >/dev/null 2>&1
+USERNAME=$(sqlite3 /usr/local/x-ui/db/x-ui.db "SELECT username FROM users LIMIT 1;")
+PASSWORD=$(sqlite3 /usr/local/x-ui/db/x-ui.db "SELECT password FROM users LIMIT 1;")
+PORT=$(jq -r '.webPort' /usr/local/x-ui/bin/config.json)
+PATH_ID=$(jq -r '.webBasePath' /usr/local/x-ui/bin/config.json)
 
 # --- Fallback if still empty ---
 if [ -z "$USERNAME" ] || [ "$USERNAME" = "null" ]; then USERNAME="admin"; fi
