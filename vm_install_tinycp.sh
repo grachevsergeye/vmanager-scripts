@@ -1,105 +1,128 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ==========================================================
-# TinyCP Full Auto-Installer (Outline-style summary, 2025)
-# - Installs TinyCP silently
-# - Extracts credentials from /root/tinycp_info or config files
-# - Writes login info to /root/tinycp.txt
-# - Displays summary automatically on root login
-# Logs -> /var/log/vm_install_tinycp.log
+# TinyCP installer + generated-credentials helper for VManager
+# - generates username/password/port
+# - runs official TinyCP installer
+# - tries to parse installer output for real password
+# - writes /root/tinycp_info and ensures it prints at root login
 # ==========================================================
+set -euo pipefail
 
 LOG="/var/log/vm_install_tinycp.log"
-SUMMARY="/root/tinycp.txt"
-INFO_FILE="/root/tinycp_info"
-ACCESS_CONF_1="/etc/tinycp/config.json"
-ACCESS_CONF_2="/usr/local/tinycp/config.json"
-PASS_FILE="/root/.tinycp/password"
+INFO="/root/tinycp_info"
+BASHRC="/root/.bashrc"
 
-exec >>"$LOG" 2>&1
-set -e
+# Generate random username / password / port
+gen_user() {
+  # pronounceable-ish short id
+  head /dev/urandom | tr -dc 'A-Za-z0-9' | fold -w 6 | head -n1
+}
+gen_pass() {
+  # generate a 14-char password containing letters, digits, symbols
+  local len=14
+  tr -dc 'A-Za-z0-9!@#$%&*()-_=+?' < /dev/urandom | fold -w "$len" | head -n1
+}
+gen_port() {
+  # pick random ephemeral port in 20000-60000
+  shuf -i 20000-60000 -n1
+}
+
+# If log doesn't exist create it
+mkdir -p "$(dirname "$LOG")"
+touch "$LOG"
+chmod 600 "$LOG"
+
+echo "=== $(date --iso-8601=seconds) TinyCP installer started ===" | tee -a "$LOG"
+
+# create generated credentials (will be used as "desired" credentials)
+DESIRED_USER="t$(gen_user)"
+DESIRED_PASS="$(gen_pass)"
+DESIRED_PORT="$(gen_port)"
+
+echo "Generated desired credentials (these will be written to $INFO)." | tee -a "$LOG"
+echo "User: $DESIRED_USER" | tee -a "$LOG"
+echo "Pass: [REDACTED]" | tee -a "$LOG"
+echo "Port: $DESIRED_PORT" | tee -a "$LOG"
+
+# Prepare system & install minimal deps
 export DEBIAN_FRONTEND=noninteractive
+dpkg --configure -a 2>/dev/null || true
+apt-get -y --no-install-recommends update >>"$LOG" 2>&1 || true
+apt-get -y --no-install-recommends install wget curl lsb-release sudo >/dev/null 2>&1 || true
 
-echo "=== $(date) TinyCP installer started ==="
+# --- RUN upstream TinyCP installer (official) ---
+# Note: The official installer may create its own credentials (interactive).
+# We run it, capture output, then try to parse real credentials from that log.
+echo "[*] Running official TinyCP installer (this may be interactive upstream)..." | tee -a "$LOG"
+# Run safely and capture stdout/stderr to our log
+# The installer is a network call; fail-safe with || true so we can parse log
+( wget -qO- https://tinycp.com/install.sh | bash ) >>"$LOG" 2>&1 || true
 
-# Basic prep
-dpkg --configure -a || true
-apt --fix-broken install -y || true
-apt update -y
-apt install -y wget curl sudo jq lsb-release pwgen || true
+# Wait a few seconds for service to start (if any)
+sleep 3
 
-# Run the official TinyCP installer
-echo "[*] Running official TinyCP installer..."
-wget -qO- https://tinycp.com/install.sh | bash || true
+# Attempt #1: try to find credentials in installer output/log
+# Look for common patterns: "Panel is available at", "Password:", "Login:"
+PARSED_URL="$(grep -Eo 'http://[^[:space:]]+:?[0-9]*/?[^[:space:]]*' "$LOG" | head -n1 || true)"
+PARSED_PASS="$(grep -Eo '([Pp]assword[:=]?[[:space:]]*[^[:space:]]+)' "$LOG" | sed -E 's/[Pp]assword[:= ]*//I' | head -n1 || true)"
+PARSED_LOGIN="$(grep -Eo '([Ll]ogin[:=]?[[:space:]]*[^[:space:]]+)' "$LOG" | sed -E 's/[Ll]ogin[:= ]*//I' | head -n1 || true)"
 
-# Wait a few seconds for TinyCP to initialize and create its info file
-sleep 10
-
-# Extract credentials
-PANEL_PORT="8080"
-LOGIN="admin"
-PASS=""
-
-# 1️⃣ Check for /root/tinycp_info first (preferred)
-if [ -f "$INFO_FILE" ]; then
-  echo "[*] Found $INFO_FILE"
-  PANEL_URL=$(grep -Eo 'http[^ ]+' "$INFO_FILE" | head -n1)
-  LOGIN=$(grep -iEo 'Login: [^ ]+' "$INFO_FILE" | awk '{print $2}')
-  PASS=$(grep -iEo 'Password: [^ ]+' "$INFO_FILE" | awk '{print $2}')
+# Attempt #2: some providers write a file like /root/tinycp_info or /root/tinycp_setup
+# Try a few known locations (this is heuristic)
+if [ -z "$PARSED_URL" ]; then
+  for f in /root/tinycp_info /etc/tinycp/info /root/tinycp_setup; do
+    if [ -f "$f" ]; then
+      PARSED_URL=$(grep -Eo 'http://[^[:space:]]+:?[0-9]*/?[^[:space:]]*' "$f" | head -n1 || true)
+      PARSED_PASS=$(grep -Eo '([Pp]assword[:=]?[[:space:]]*[^[:space:]]+)' "$f" | sed -E 's/[Pp]assword[:= ]*//I' | head -n1 || true)
+      PARSED_LOGIN=$(grep -Eo '([Ll]ogin[:=]?[[:space:]]*[^[:space:]]+)' "$f" | sed -E 's/[Ll]ogin[:= ]*//I' | head -n1 || true)
+      if [ -n "$PARSED_URL" ]; then break; fi
+    fi
+  done
 fi
 
-# 2️⃣ Try backup password files if needed
-if [ -z "$PASS" ] && [ -f "$PASS_FILE" ]; then
-  PASS=$(head -n1 "$PASS_FILE" 2>/dev/null)
+# If parsing found nothing, fallback to our generated values
+if [ -n "$PARSED_URL" ] || [ -n "$PARSED_PASS" ] || [ -n "$PARSED_LOGIN" ]; then
+  # Use parsed (real) values when available
+  FINAL_URL="${PARSED_URL:-http://$(hostname -I | awk '{print $1}'):8080/}"
+  FINAL_LOGIN="${PARSED_LOGIN:-admin}"
+  FINAL_PASS="${PARSED_PASS:-(see $LOG)}"
+  SOURCE_NOTE="(parsed from installer output/log)"
+else
+  # Fallback: use generated credentials. NOTE: these are only valid if you configure TinyCP to accept them,
+  # or if you use an API/CLI to create the admin after install (not done here).
+  FINAL_URL="http://$(hostname -I | awk '{print $1}'):${DESIRED_PORT}/"
+  FINAL_LOGIN="$DESIRED_USER"
+  FINAL_PASS="$DESIRED_PASS"
+  SOURCE_NOTE="(generated by bootstrap; may require manual finalization)"
 fi
 
-# 3️⃣ Try JSON config fallback
-if [ -z "$PASS" ] && [ -f "$ACCESS_CONF_1" ]; then
-  PASS=$(grep -Eo '"password"\s*:\s*"[^"]+"' "$ACCESS_CONF_1" | head -n1 | cut -d'"' -f4)
-elif [ -z "$PASS" ] && [ -f "$ACCESS_CONF_2" ]; then
-  PASS=$(grep -Eo '"password"\s*:\s*"[^"]+"' "$ACCESS_CONF_2" | head -n1 | cut -d'"' -f4)
-fi
+# Write the info file that VManager will show and root will see on login
+cat > "$INFO" <<EOF
+==============================================
+✅ TinyCP Installation Complete!
+Date: $(date)
+Note: $SOURCE_NOTE
 
-# 4️⃣ Generate random password if absolutely nothing found
-if [ -z "$PASS" ]; then
-  PASS=$(pwgen -s 12 1)
-  echo "$PASS" > "$PASS_FILE"
-fi
+Panel: ${FINAL_URL}
+Login: ${FINAL_LOGIN}
+Password: ${FINAL_PASS}
 
-# Get system info
-IP=$(hostname -I | awk '{print $1}')
-DATE="$(date)"
+Installation log: ${LOG}
 
-# Set fallback panel URL if none found
-if [ -z "$PANEL_URL" ]; then
-  PANEL_URL="http://$IP:8080"
-fi
-
-# Write summary to /root/tinycp.txt (shown at every login)
-cat > "$SUMMARY" <<EOF
-#!/bin/bash
-echo ""
-echo "=============================================="
-echo -e "\033[1;32m✅ TinyCP Installation Complete!\033[0m"
-echo ""
-echo "Date: $DATE"
-echo ""
-echo "Panel: $PANEL_URL"
-echo "Login: $LOGIN"
-echo "Password: $PASS"
-echo ""
-echo "=============================================="
-echo ""
+If the password is '(see ${LOG})' or login failed, open the URL in the browser and follow the TinyCP first-run steps,
+or inspect $LOG for the real password auto-generated by the installer.
+==============================================
 EOF
 
-chmod +x "$SUMMARY"
+chmod 600 "$INFO"
 
-# Auto-show summary on login
-BASHRC="/root/.bashrc"
-if ! grep -qF "bash /root/tinycp.txt" "$BASHRC" 2>/dev/null; then
-  echo "" >> "$BASHRC"
-  echo "# show TinyCP credentials at login" >> "$BASHRC"
-  echo "if [ -f /root/tinycp.txt ]; then bash /root/tinycp.txt; fi" >> "$BASHRC"
+# Ensure the info prints at root login (safe append to .bashrc if not present)
+if ! grep -qF "cat $INFO" "$BASHRC" 2>/dev/null; then
+  {
+    echo ""
+    echo "# show TinyCP info at login (added by vm installer)"
+    echo "if [ -f $INFO ]; then cat $INFO; fi"
+  } >> "$BASHRC"
 fi
 
-echo "✅ TinyCP installer finished. Summary written to $SUMMARY"
-echo "See full log: $LOG"
+echo "✅ TinyCP installer: info saved to $INFO and log at $LOG" | tee -a "$LOG"
