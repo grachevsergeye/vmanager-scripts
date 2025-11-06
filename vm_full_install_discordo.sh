@@ -1,11 +1,10 @@
 #!/bin/bash
 # ==========================================================
-# Discordo Full Installer (final; prints instructions for using personal token)
+# Discordo Full Installer (builds and installs binary)
 # ==========================================================
 
 LOG_FILE="/var/log/vm_install_discordo.log"
 SUMMARY_SCRIPT="/root/discordo.txt"
-INSTALLER_SH="/tmp/install_discordo.sh"
 
 set -e
 export DEBIAN_FRONTEND=noninteractive
@@ -15,10 +14,10 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "========== $(date) Starting Discordo installation =========="
 
-# --- Prep & deps ---
+# --- Prep system and deps ---
 dpkg --configure -a 2>/dev/null || true
 apt-get update -y >/dev/null 2>&1
-apt-get install -y git curl build-essential libx11-dev libxkbfile-dev libsecret-1-dev xwayland gnome-keyring pkg-config >/dev/null 2>&1 || true
+apt-get install -y git curl build-essential libx11-dev libxkbfile-dev libsecret-1-dev xwayland gnome-keyring pkg-config >/dev/null 2>&1
 
 # --- Remove old Go ---
 rm -rf /usr/local/go
@@ -30,7 +29,6 @@ curl -fsSL -O https://go.dev/dl/go1.23.2.linux-amd64.tar.gz
 tar -C /usr/local -xzf go1.23.2.linux-amd64.tar.gz
 export PATH=$PATH:/usr/local/go/bin
 echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-source ~/.bashrc
 
 # --- Clone Discordo ---
 cd ~
@@ -38,18 +36,19 @@ rm -rf discordo
 git clone https://github.com/ayn2op/discordo.git
 cd discordo
 
-# --- Build Discordo ---
+# --- Build binary ---
 go clean
-go build .
+go build .  # waits for build to finish
 
-# --- Move binary to /usr/local/bin ---
-sudo mv discordo /usr/local/bin/discordo
+# --- Move binary ---
+mv discordo /usr/local/bin/discordo
+chmod +x /usr/local/bin/discordo
 
-# --- Ensure GNOME Keyring is running ---
+# --- GNOME Keyring ---
 eval $(gnome-keyring-daemon --start)
 export $(gnome-keyring-daemon --start)
 
-# --- Create summary script ---
+# --- Summary script ---
 cat > "$SUMMARY_SCRIPT" <<EOF
 #!/bin/bash
 echo ""
@@ -66,12 +65,12 @@ echo ""
 EOF
 chmod +x "$SUMMARY_SCRIPT"
 
-# Add to root bashrc
+# Add summary to bashrc
 if ! grep -q "bash $SUMMARY_SCRIPT" /root/.bashrc 2>/dev/null; then
   echo "bash $SUMMARY_SCRIPT" >> /root/.bashrc
 fi
 
-# Print summary immediately
+# Print immediately
 bash "$SUMMARY_SCRIPT"
 
 echo "[DONE] $(date) Installation finished."
