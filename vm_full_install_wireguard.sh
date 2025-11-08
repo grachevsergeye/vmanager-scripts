@@ -114,11 +114,11 @@ Notes:
 ==============================================
 EOF
 
-chmod 700 "${SUMMARY}"
-if ! grep -qF "bash ${SUMMARY}" /root/.bashrc 2>/dev/null; then
-  echo "bash ${SUMMARY}" >> /root/.bashrc
+chmod 644 "${SUMMARY}"
+if ! grep -qF "cat ${SUMMARY}" /root/.bashrc 2>/dev/null; then
+  echo "cat ${SUMMARY}" >> /root/.bashrc
 fi
 
-bash "${SUMMARY}"
+cat "${SUMMARY}"
 echo "=== $(date) WireGuard installer finished ==="
 exit 0
