@@ -148,13 +148,12 @@ Notes:
  - OpenVPN server stores certs/keys in ${EASYRSA_DIR}/pki
 ==============================================
 EOF
-chmod 700 "${SUMMARY}"
+chmod 644 "${SUMMARY}"
 if ! grep -qF "cat ${SUMMARY}" /root/.bashrc 2>/dev/null; then
   echo "cat ${SUMMARY}" >> /root/.bashrc
 fi
 
-# Print now
-bash "${SUMMARY}"
+cat "${SUMMARY}"
 
 echo "=== $(date) OpenVPN installer finished ==="
 exit 0
