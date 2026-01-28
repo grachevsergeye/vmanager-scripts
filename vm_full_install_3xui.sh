@@ -1,7 +1,8 @@
 #!/bin/bash
 # ==========================================================
 # 3x-ui Full Installer (final; prints ONLY real creds)
-# Enables HTTPS with self-signed certificate
+# Automatically handles HTTPS with self-signed certificate
+# Falls back to HTTP if TLS is not supported
 # ==========================================================
 
 LOG_FILE="/var/log/vm_install_3xui.log"
@@ -29,7 +30,7 @@ echo "Downloading official 3x-ui installer..."
 curl -fsSL -o "$INSTALLER_SH" "https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh"
 chmod +x "$INSTALLER_SH"
 
-echo "Running official installer (its output will be captured in $LOG_FILE)..."
+echo "Running official installer..."
 (bash "$INSTALLER_SH" <<'INP'
 n
 INP
@@ -42,12 +43,8 @@ sleep 5
 # --- Wait for config/log entries ---
 echo "Waiting for config/log entries to appear..."
 for i in $(seq 1 60); do
-  if [ -f "$CONFIG_FILE" ] || [ -f "$DB_FILE" ]; then
-    break
-  fi
-  if grep -q -E 'Username:|Password:|Access URL:' "$LOG_FILE" 2>/dev/null; then
-    break
-  fi
+  if [ -f "$CONFIG_FILE" ] || [ -f "$DB_FILE" ]; then break; fi
+  if grep -q -E 'Username:|Password:|Access URL:' "$LOG_FILE" 2>/dev/null; then break; fi
   sleep 2
 done
 
@@ -70,7 +67,6 @@ if [ -z "$USERNAME" ] || [ -z "$PASSWORD" ]; then
   GREP_USER=$(grep -m1 -E 'Username:' "$LOG_FILE" 2>/dev/null || true)
   GREP_PASS=$(grep -m1 -E 'Password:' "$LOG_FILE" 2>/dev/null || true)
   GREP_URL=$(grep -m1 -E 'Access URL:|URL:' "$LOG_FILE" 2>/dev/null || true)
-
   [ -n "$GREP_USER" ] && USERNAME=$(echo "$GREP_USER" | sed -E 's/.*[Uu]sername: *//')
   [ -n "$GREP_PASS" ] && PASSWORD=$(echo "$GREP_PASS" | sed -E 's/.*[Pp]assword: *//')
   [ -n "$GREP_URL" ] && URL=$(echo "$GREP_URL" | sed -E 's/.*[Uu][Rr][Ll]: *//; s/.*Access URL: *//; s/^[[:space:]]*//')
@@ -85,7 +81,7 @@ fi
 # Build URL if missing
 if [ -z "$URL" ] && [ -n "$PORT" ]; then
   IP=$(hostname -I | awk '{print $1}')
-  URL="https://${IP}:$PORT"
+  URL="http://${IP}:$PORT"
   [ -n "$PATH_ID" ] && PATH_ID=$(echo "$PATH_ID" | sed 's#^/*##; s#/*$##') && URL="$URL/$PATH_ID"
 fi
 
@@ -97,19 +93,32 @@ x-ui setting -listen 0.0.0.0
 systemctl restart x-ui
 sleep 3
 
-# --- Generate self-signed SSL cert AFTER x-ui initialized ---
-echo "Generating self-signed certificate..."
+# --- Generate self-signed SSL cert ---
 mkdir -p "$SSL_DIR"
 openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
   -keyout "$SSL_DIR/x-ui.key" -out "$SSL_DIR/x-ui.crt" \
   -subj "/CN=$(hostname -I | awk '{print $1}')"
+chmod 600 "$SSL_DIR/x-ui.key" "$SSL_DIR/x-ui.crt"
+chown root:root "$SSL_DIR/x-ui.key" "$SSL_DIR/x-ui.crt"
 
-# --- Enable TLS ---
-x-ui setting -tls true
-x-ui setting -tls-cert "$SSL_DIR/x-ui.crt"
-x-ui setting -tls-key "$SSL_DIR/x-ui.key"
-systemctl restart x-ui
-sleep 3
+# --- Enable TLS in x-ui if supported ---
+TLS_OK=0
+if x-ui setting -tls true >/dev/null 2>&1; then
+  x-ui setting -tls-cert "$SSL_DIR/x-ui.crt"
+  x-ui setting -tls-key "$SSL_DIR/x-ui.key"
+  systemctl restart x-ui
+  sleep 3
+  # Test if TLS works locally
+  if curl -k --max-time 5 "https://127.0.0.1:$PORT" >/dev/null 2>&1; then
+    TLS_OK=1
+    URL="https://$IP:$PORT"
+  fi
+fi
+
+if [ "$TLS_OK" -eq 0 ]; then
+  echo "⚠️ HTTPS not supported on this x-ui version or port. Falling back to HTTP."
+  URL="http://$IP:$PORT"
+fi
 
 # --- Validate credentials ---
 is_valid(){ local v="$1"; [ -n "$v" ] && [ "$v" != "null" ]; }
@@ -129,11 +138,25 @@ echo ""
 echo "Login: $USERNAME"
 echo "Password: $PASSWORD"
 echo "URL: $URL"
+EOF
+
+if [ "$TLS_OK" -eq 1 ]; then
+cat >> "$SUMMARY_SCRIPT" <<EOF
 echo ""
 echo "⚠️ HTTPS uses a self-signed certificate. Browser may warn."
+EOF
+else
+cat >> "$SUMMARY_SCRIPT" <<EOF
+echo ""
+echo "⚠️ Using HTTP because HTTPS is not supported on this version/port."
+EOF
+fi
+
+cat >> "$SUMMARY_SCRIPT" <<EOF
 echo "=============================================="
 echo ""
 EOF
+
 chmod +x "$SUMMARY_SCRIPT"
 grep -q "bash $SUMMARY_SCRIPT" /root/.bashrc 2>/dev/null || echo "bash $SUMMARY_SCRIPT" >> /root/.bashrc
 
