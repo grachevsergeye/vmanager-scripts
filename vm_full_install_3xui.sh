@@ -35,9 +35,6 @@ n
 INP
 ) 2>&1 | tee -a "$LOG_FILE"
 
-cp "$SSL_DIR/x-ui.crt" /usr/local/x-ui/x-ui.crt
-cp "$SSL_DIR/x-ui.key" /usr/local/x-ui/x-ui.key
-
 systemctl enable x-ui >/dev/null 2>&1 || true
 systemctl restart x-ui >/dev/null 2>&1 || true
 
@@ -63,7 +60,7 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
   -keyout "$SSL_DIR/x-ui.key" -out "$SSL_DIR/x-ui.crt" \
   -subj "/CN=$(hostname -I | awk '{print $1}')"
 
-# --- Extract credentials: try config.json first (preferred) ---
+# --- Extract credentials: try config.json first ---
 USERNAME=""
 PASSWORD=""
 PORT=""
@@ -119,6 +116,11 @@ x-ui setting -listen 0.0.0.0
 x-ui setting -tls true
 x-ui setting -tls-cert "$SSL_DIR/x-ui.crt"
 x-ui setting -tls-key "$SSL_DIR/x-ui.key"
+
+# Copy cert/key to default locations
+cp "$SSL_DIR/x-ui.crt" /usr/local/x-ui/x-ui.crt
+cp "$SSL_DIR/x-ui.key" /usr/local/x-ui/x-ui.key
+
 systemctl restart x-ui
 sleep 3
 
