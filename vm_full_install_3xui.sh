@@ -37,6 +37,7 @@ INP
 
 systemctl enable x-ui >/dev/null 2>&1 || true
 systemctl restart x-ui >/dev/null 2>&1 || true
+sleep 5
 
 # --- Wait for config/log entries ---
 echo "Waiting for config/log entries to appear..."
