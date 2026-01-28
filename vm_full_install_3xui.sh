@@ -35,6 +35,9 @@ n
 INP
 ) 2>&1 | tee -a "$LOG_FILE"
 
+cp "$SSL_DIR/x-ui.crt" /usr/local/x-ui/x-ui.crt
+cp "$SSL_DIR/x-ui.key" /usr/local/x-ui/x-ui.key
+
 systemctl enable x-ui >/dev/null 2>&1 || true
 systemctl restart x-ui >/dev/null 2>&1 || true
 
