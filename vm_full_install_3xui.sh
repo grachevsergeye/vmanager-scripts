@@ -2,7 +2,7 @@
 # ==========================================================
 # 3x-ui Full Installer (final; prints ONLY real creds)
 # Automatically handles HTTPS with self-signed certificate
-# Falls back to HTTP if TLS is not supported
+# Falls back to HTTP if TLS isn’t working
 # ==========================================================
 
 LOG_FILE="/var/log/vm_install_3xui.log"
@@ -48,7 +48,7 @@ for i in $(seq 1 60); do
   sleep 2
 done
 
-# --- Extract credentials ---
+# --- Extract credentials & port ---
 USERNAME=""
 PASSWORD=""
 PORT=""
@@ -63,26 +63,29 @@ if [ -f "$CONFIG_FILE" ]; then
 fi
 
 # Fallback: parse installer log
-if [ -z "$USERNAME" ] || [ -z "$PASSWORD" ]; then
+if [ -z "$USERNAME" ] || [ -z "$PASSWORD" ] || [ -z "$PORT" ]; then
   GREP_USER=$(grep -m1 -E 'Username:' "$LOG_FILE" 2>/dev/null || true)
   GREP_PASS=$(grep -m1 -E 'Password:' "$LOG_FILE" 2>/dev/null || true)
-  GREP_URL=$(grep -m1 -E 'Access URL:|URL:' "$LOG_FILE" 2>/dev/null || true)
+  GREP_PORT=$(grep -m1 -E 'Port:' "$LOG_FILE" 2>/dev/null || true)
+  GREP_PATH=$(grep -m1 -E 'WebBasePath:' "$LOG_FILE" 2>/dev/null || true)
+
   [ -n "$GREP_USER" ] && USERNAME=$(echo "$GREP_USER" | sed -E 's/.*[Uu]sername: *//')
   [ -n "$GREP_PASS" ] && PASSWORD=$(echo "$GREP_PASS" | sed -E 's/.*[Pp]assword: *//')
-  [ -n "$GREP_URL" ] && URL=$(echo "$GREP_URL" | sed -E 's/.*[Uu][Rr][Ll]: *//; s/.*Access URL: *//; s/^[[:space:]]*//')
+  [ -n "$GREP_PORT" ] && PORT=$(echo "$GREP_PORT" | sed -E 's/.*Port: *//')
+  [ -n "$GREP_PATH" ] && PATH_ID=$(echo "$GREP_PATH" | sed -E 's/.*WebBasePath: *//')
 fi
 
-# Fallback: sqlite DB
+# Fallback: sqlite DB for username
 if { [ -z "$USERNAME" ] || [ -z "$PASSWORD" ]; } && [ -f "$DB_FILE" ]; then
   USERNAME_DB=$(sqlite3 "$DB_FILE" "SELECT username FROM user LIMIT 1;" 2>/dev/null || true)
   [ -n "$USERNAME_DB" ] && USERNAME="$USERNAME_DB"
 fi
 
-# Build URL if missing
-if [ -z "$URL" ] && [ -n "$PORT" ]; then
-  IP=$(hostname -I | awk '{print $1}')
-  URL="http://${IP}:$PORT"
-  [ -n "$PATH_ID" ] && PATH_ID=$(echo "$PATH_ID" | sed 's#^/*##; s#/*$##') && URL="$URL/$PATH_ID"
+# --- Validate port ---
+if [ -z "$PORT" ]; then
+  echo "ERROR: Could not determine x-ui web port."
+  tail -n 40 "$LOG_FILE"
+  exit 1
 fi
 
 # --- Force credentials in x-ui ---
@@ -101,7 +104,7 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 chmod 600 "$SSL_DIR/x-ui.key" "$SSL_DIR/x-ui.crt"
 chown root:root "$SSL_DIR/x-ui.key" "$SSL_DIR/x-ui.crt"
 
-# --- Enable TLS in x-ui if supported ---
+# --- Enable TLS if supported ---
 TLS_OK=0
 if x-ui setting -tls true >/dev/null 2>&1; then
   x-ui setting -tls-cert "$SSL_DIR/x-ui.crt"
@@ -111,19 +114,19 @@ if x-ui setting -tls true >/dev/null 2>&1; then
   # Test if TLS works locally
   if curl -k --max-time 5 "https://127.0.0.1:$PORT" >/dev/null 2>&1; then
     TLS_OK=1
-    URL="https://$IP:$PORT"
   fi
 fi
 
-if [ "$TLS_OK" -eq 0 ]; then
-  echo "⚠️ HTTPS not supported on this x-ui version or port. Falling back to HTTP."
-  URL="http://$IP:$PORT"
-fi
+# --- Determine final URL ---
+IP=$(hostname -I | awk '{print $1}')
+URL="http://$IP:$PORT"
+[ "$TLS_OK" -eq 1 ] && URL="https://$IP:$PORT"
+[ -n "$PATH_ID" ] && PATH_ID=$(echo "$PATH_ID" | sed 's#^/*##; s#/*$##') && URL="$URL/$PATH_ID"
 
-# --- Validate credentials ---
+# --- Validate credentials & URL ---
 is_valid(){ local v="$1"; [ -n "$v" ] && [ "$v" != "null" ]; }
 if ! is_valid "$USERNAME" || ! is_valid "$PASSWORD" || ! is_valid "$URL"; then
-  echo "ERROR: Could not reliably extract real credentials."
+  echo "ERROR: Could not reliably extract credentials or build URL."
   tail -n 40 "$LOG_FILE"
   exit 1
 fi
