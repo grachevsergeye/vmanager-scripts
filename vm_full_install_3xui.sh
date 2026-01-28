@@ -56,6 +56,44 @@ for i in $(seq 1 60); do
   sleep 2
 done
 
+echo "Forcing final credentials..."
+
+ADMIN_USER="admin"
+ADMIN_PASS="$(openssl rand -base64 14)"
+PORT="54321"
+
+x-ui setting -username "$ADMIN_USER" -password "$ADMIN_PASS"
+x-ui setting -port "$PORT"
+x-ui setting -listen 0.0.0.0
+
+systemctl restart x-ui
+sleep 3
+
+IP=$(hostname -I | awk '{print $1}')
+URL="http://${IP}:${PORT}"
+
+cat > "$SUMMARY_SCRIPT" <<EOF
+#!/bin/bash
+echo ""
+echo "=============================================="
+echo "✅ 3x-ui Installation Complete!"
+echo ""
+echo "Login: $ADMIN_USER"
+echo "Password: $ADMIN_PASS"
+echo "URL: $URL"
+echo "=============================================="
+echo ""
+EOF
+
+chmod +x "$SUMMARY_SCRIPT"
+
+if ! grep -q "bash $SUMMARY_SCRIPT" /root/.bashrc 2>/dev/null; then
+  echo "bash $SUMMARY_SCRIPT" >> /root/.bashrc
+fi
+
+bash "$SUMMARY_SCRIPT"
+
+
 # --- Extract credentials: try config.json first (preferred) ---
 USERNAME=""
 PASSWORD=""
